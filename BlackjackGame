@@ -1,0 +1,254 @@
+import org.json.*;
+
+import java.util.*;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+
+class DeckOfCardsAPI {
+    private static final String BASE_URL = "https://deckofcardsapi.com/api/deck/";
+
+    public static String drawCards(String deckId, int count) throws Exception {
+        String url = BASE_URL + deckId + "/draw/?count=" + count;
+        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        connection.setRequestMethod("GET");
+
+        int responseCode = connection.getResponseCode();
+        if (responseCode == HttpURLConnection.HTTP_OK) {
+            return new Scanner(connection.getInputStream()).useDelimiter("\\A").next();
+        } else {
+            throw new Exception("Failed to draw cards: " + responseCode);
+        }
+    }
+}
+
+class Card {
+    private String suit;
+    private String rank;
+
+    public Card(String suit, String rank) {
+        this.suit = suit;
+        this.rank = rank;
+    }
+
+    public String toString() {
+        return rank + " of " + suit;
+    }
+
+    public int getValue() {
+        if (rank.equals("Ace")) {
+            return 11;  // For simplicity, count Ace as 11
+        } else if (rank.equals("King") || rank.equals("Queen") || rank.equals("Jack")) {
+            return 10;
+        } else {
+            try {
+                return Integer.parseInt(rank);
+            } catch (NumberFormatException e) {
+                // Handle non-numeric ranks (e.g., "QUEEN", "KING")
+                return 10;
+            }
+        }
+    }
+}
+
+class Deck {
+    private String deckId;
+
+    public Deck() throws Exception {
+        deckId = createDeck();
+    }
+
+    private String createDeck() throws Exception {
+        String url = "https://deckofcardsapi.com/api/deck/new/shuffle/?deck_count=1";
+        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        connection.setRequestMethod("GET");
+
+        int responseCode = connection.getResponseCode();
+        if (responseCode == HttpURLConnection.HTTP_OK) {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
+            String line;
+            StringBuilder response = new StringBuilder();
+            while ((line = reader.readLine()) != null) {
+                response.append(line);
+            }
+            reader.close();
+            return new JSONObject(response.toString()).getString("deck_id");
+        } else {
+            throw new Exception("Failed to create deck: " + responseCode);
+        }
+    }
+
+    public Card drawCard() throws Exception {
+        String response = DeckOfCardsAPI.drawCards(deckId, 1);
+        JSONObject json = new JSONObject(response);
+        JSONArray cardsArray = json.getJSONArray("cards");
+
+        JSONObject cardObject = cardsArray.getJSONObject(0);
+        String suit = cardObject.getString("suit");
+        String rank = cardObject.getString("value");
+        return new Card(suit, rank);
+    }
+}
+
+
+
+interface ScoringStrategy {
+    int calculateTotal(List<Card> cards);
+}
+
+class DefaultScoringStrategy implements ScoringStrategy {
+    @Override
+    public int calculateTotal(List<Card> cards) {
+        int totalValue = 0;
+        int numAces = 0;
+
+        for (Card card : cards) {
+            totalValue += card.getValue();
+            if (card.getValue() == 11) {
+                numAces++;
+            }
+        }
+
+        while (totalValue > 21 && numAces > 0) {
+            totalValue -= 10;
+            numAces--;
+        }
+
+        return totalValue;
+    }
+}
+
+class Hand {
+    private List<Card> cards;
+    private ScoringStrategy scoringStrategy;
+
+    public Hand(ScoringStrategy strategy) {
+        cards = new ArrayList<>();
+        scoringStrategy = strategy;
+    }
+
+//    public void setScoringStrategy(ScoringStrategy strategy) {
+//        scoringStrategy = strategy;
+//    }
+
+    public void addCard(Card card) {
+        cards.add(card);
+    }
+
+    public int getTotalValue() {
+        return scoringStrategy.calculateTotal(cards);
+    }
+
+    public void display() {
+        for (Card card : cards) {
+            System.out.println(card);
+        }
+        System.out.println("Total value: " + getTotalValue());
+    }
+    public Card getFirstCard() {
+        if (cards.isEmpty()) {
+            return null;
+        }
+        return cards.get(0);
+    }
+}
+
+public class BlackjackGame {
+    public static void main(String[] args) throws Exception {
+        Scanner scanner = new Scanner(System.in);
+
+        do {
+            Deck deck = new Deck();
+            ScoringStrategy defaultScoringStrategy = new DefaultScoringStrategy();
+
+            Hand playerHand = new Hand(defaultScoringStrategy);
+            Hand dealerHand = new Hand(defaultScoringStrategy);
+
+            playerHand.addCard(deck.drawCard());
+            playerHand.addCard(deck.drawCard());
+            dealerHand.addCard(deck.drawCard());
+            dealerHand.addCard(deck.drawCard());
+
+            System.out.println("Player's hand:");
+            playerHand.display();
+            System.out.println();
+
+            System.out.println("Dealer's hand:");
+            System.out.println(dealerHand.getFirstCard());  // Display the first card only
+            System.out.println("Hidden card");
+            System.out.println();
+
+            // Player's turn
+            while (true) {
+                System.out.println("Do you want to hit or stand? (h/s)");
+                String choice = scanner.next();
+
+                if (choice.equalsIgnoreCase("h")) {
+                    Card drawnCard = deck.drawCard();
+                    playerHand.addCard(drawnCard);
+                    System.out.println("Player drew: " + drawnCard);
+                    System.out.println("Player's hand:");
+                    playerHand.display();
+
+                    if (playerHand.getTotalValue() > 21) {
+                        System.out.println("Bust! You lose.");
+                        break;
+                    }
+                } else if (choice.equalsIgnoreCase("s")) {
+                    break;
+                } else {
+                    System.out.println("Invalid choice. Please enter 'h' or 's'.");
+                }
+            }
+
+            // Dealer's turn
+            while (dealerHand.getTotalValue() < 17) {
+                Card drawnCard = deck.drawCard();
+                dealerHand.addCard(drawnCard);
+                System.out.println("Dealer drew: " + drawnCard);
+            }
+
+            // Determine the winner
+            int playerTotal = playerHand.getTotalValue();
+            int dealerTotal = dealerHand.getTotalValue();
+
+            System.out.println("Player's hand:");
+            playerHand.display();
+            System.out.println();
+
+            System.out.println("Dealer's hand:");
+            dealerHand.display();
+            System.out.println();
+
+            if (playerTotal > 21) {
+                System.out.println("Bust! You lose.");
+            } else if (dealerTotal > 21) {
+                System.out.println("Dealer busts! Player wins.");
+            } else if (playerTotal > dealerTotal) {
+                System.out.println("Player wins!");
+            } else if (playerTotal < dealerTotal) {
+                System.out.println("Dealer wins.");
+            } else {
+                System.out.println("It's a tie!");
+            }
+
+            String playAgain;
+            do {
+                System.out.println("Do you want to play again? (y/n)");
+                playAgain = scanner.next().toLowerCase(); // Convert input to lowercase
+
+                if (!playAgain.equals("y") && !playAgain.equals("n")) {
+                    System.out.println("Invalid input. Please choose between 'y' and 'n'.");
+                }
+            } while (!playAgain.equals("y") && !playAgain.equals("n"));
+
+            if (playAgain.equals("n")) {
+                break;
+            }
+        } while (true);
+
+        scanner.close();
+    }
+}
+
